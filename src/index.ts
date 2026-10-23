@@ -29,9 +29,7 @@ async function main() {
     }
 
     try {
-      const reply = await getAssistantReply(client, config.model, [
-        { role: 'user', content: input },
-      ]);
+      const reply = await getAssistantReply(client, config.model, input);
       console.log(`\nAssistant: ${reply}\n`);
     } catch (error) {
       console.error(`\nCloudflare request failed: ${String(error)}`);
