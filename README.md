@@ -43,7 +43,7 @@ This is a **workflow using an LLM**, rather than an autonomous agent that choose
 ### Implemented in Phase 1
 
 - Start a chatbot in the terminal and send messages to Cloudflare Workers AI.
-- Keep the current conversation's user and assistant messages in memory and send that history with each request.
+- Treat every message as an independent request; send only the current user message to the model and keep no conversation history.
 - Configure the Cloudflare account, API token, and model through environment variables.
 - Report all missing required configuration variables before opening the chat.
 - Display model/API errors and exit the current chat; enter `/exit` or press Ctrl+C to end the session.
@@ -67,12 +67,12 @@ This is a **workflow using an LLM**, rather than an autonomous agent that choose
 
 ### Phase 1: current chatbot
 
-The current code uses a normal chat-completions request. The chat history is kept in process memory for the duration of the terminal session. The Cloudflare utility builds the OpenAI-compatible endpoint URL from the account ID; the model service sends the messages and returns the assistant text.
+The current code uses a normal chat-completions request. Each request contains only the latest user message; previous user and assistant turns are neither stored nor sent to the model. The Cloudflare utility builds the OpenAI-compatible endpoint URL from the account ID; the model service sends the current message and returns the assistant text.
 
 ```mermaid
 flowchart LR
     U["You in terminal"] -->|message| CLI["CLI chat loop\nsrc/index.ts"]
-    CLI -->|current chat history| SVC["Model service\nsrc/services/model.ts"]
+    CLI -->|only the current message| SVC["Model service\nsrc/services/model.ts"]
     ENV[".env variables"] -->|account, token, model| CF["Cloudflare utility\nsrc/util/cloudflare.ts"]
     CF -->|OpenAI-compatible client| SVC
     SVC -->|chat completion request| AI["Cloudflare Workers AI"]
@@ -107,10 +107,10 @@ flowchart TD
 
 | Component | Responsibility | Status |
 |---|---|---|
-| Terminal CLI (`src/index.ts`) | Reads a message, sends the session history for a reply, and prints the response. Later it will also select sample customer/ticket and show workflow events. | Basic chat implemented; selection/events planned. |
+| Terminal CLI (`src/index.ts`) | Reads a message, sends only that message for a reply, and prints the response. Later it will also select sample customer/ticket and show workflow events. | Stateless basic chat implemented; selection/events planned. |
 | Cloudflare utility (`src/util/cloudflare.ts`) | Creates the OpenAI-compatible client using the account-specific Workers AI endpoint. | Implemented. |
 | Environment loader (`src/util/env.ts`) | Loads `.env` and validates account ID, API token, and model. | Implemented. |
-| Model service (`src/services/model.ts`) | Sends chat history to the selected model and returns non-empty assistant text. | Implemented. |
+| Model service (`src/services/model.ts`) | Sends the current message to the selected model and returns non-empty assistant text. | Implemented. |
 | Base and state prompts (`src/prompts/`) | Supply shared company context and the instructions for the current workflow state. | Planned for Phase 2. |
 | Result contracts (`src/contracts/`) | Define and validate strict JSON outcomes for each state. | Planned for Phase 2. |
 | Orchestrator (`src/orchestrator.ts`) | Runs state transitions in code; stays in the current state for unclear/invalid results. | Planned for Phase 3. |
@@ -170,7 +170,7 @@ Edit `.env` and set all three Cloudflare values described below. Keep `.env` pri
 pnpm dev
 ```
 
-Type a message and press Enter. Enter `/exit` or press Ctrl+C to finish. The session history is kept only in memory and is discarded when the process exits.
+Each message is an independent request. The chatbot does not remember earlier messages, and no conversation transcript is kept in memory or written to disk. Enter `/exit` or press Ctrl+C to finish.
 
 To compile and run the JavaScript build instead:
 
@@ -288,6 +288,6 @@ This demo uses a deliberately small, code-orchestrated workflow. The references 
 
 - Phase 1 is a general chat loop, not yet the call-audit prompt chain.
 - There is no state-specific prompt, JSON schema validation, customer/ticket selector, orchestrator, or MCP server yet.
-- Phase 1 history exists only in memory; local conversation event logs are planned for Phase 3.
+- Phase 1 is stateless: each model request receives only the current user message. The event log planned for Phase 3 records workflow outputs and MCP actions; it does not become model conversation memory.
 - The demo is not voice-enabled and does not make production ticket changes or contact real customers.
 - Unclear replies remain in the current state once state orchestration is implemented; bounded retries and automated handoff are out of scope.

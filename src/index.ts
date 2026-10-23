@@ -1,5 +1,4 @@
 import { createInterface } from 'node:readline';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { getAssistantReply } from './services/model.js';
 import { createCloudflareClient } from './util/cloudflare.js';
 import { getCloudflareConfig } from './util/env.js';
@@ -15,7 +14,6 @@ async function main() {
   }
 
   const client = createCloudflareClient(config);
-  const messages: ChatCompletionMessageParam[] = [];
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
 
   console.log('Cloudflare Workers AI chat. Type /exit to quit.');
@@ -30,13 +28,12 @@ async function main() {
       continue;
     }
 
-    messages.push({ role: 'user', content: input });
     try {
-      const reply = await getAssistantReply(client, config.model, messages);
-      messages.push({ role: 'assistant', content: reply });
+      const reply = await getAssistantReply(client, config.model, [
+        { role: 'user', content: input },
+      ]);
       console.log(`\nAssistant: ${reply}\n`);
     } catch (error) {
-      messages.pop();
       console.error(`\nCloudflare request failed: ${String(error)}`);
       process.exitCode = 1;
       break;

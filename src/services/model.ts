@@ -1,7 +1,7 @@
 import type OpenAI from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
-// Sends the current chat history to the configured Workers AI model and returns its reply.
+// Sends the current message to the configured Workers AI model and returns its reply.
 export async function getAssistantReply(
   client: OpenAI,
   model: string,

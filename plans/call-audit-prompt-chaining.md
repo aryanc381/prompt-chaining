@@ -19,6 +19,7 @@ Build a local, terminal-based chatbot demo for NComputing India that demonstrate
 - Keep `data/demo-data.json` read-only. Persist each conversation's state outputs and MCP actions in a separate local JSON event log.
 - Display conversation, state transitions, MCP calls, and tool results in the terminal.
 - Use Cloudflare Workers AI through a small wrapper in `src/util/cloudflare.ts`.
+- Keep model requests stateless: send only the current customer utterance and the active state's explicitly supplied prompt/context; do not retain or resend prior turns as model chat history.
 
 Explicitly excluded: changes to Circuit or other repos; real Circuit credentials or customer data; database persistence; mutating demo fixtures; voice telephony; bounded retries, automated handoff, or retry policies for unclear replies/tool failures. Unclear replies remain in the current state. Model/MCP failures are shown in the CLI and stop that conversation.
 
@@ -187,7 +188,7 @@ The engineer runs these cases manually after implementation. Codex does not run 
 
 ### Phase 1 — Cloudflare connection and terminal chatbot
 
-- **Outcome:** A runnable terminal chatbot sends user input to Cloudflare Workers AI and prints the response.
+- **Outcome:** A runnable terminal chatbot sends each user message independently to Cloudflare Workers AI and prints the response.
 - **Prerequisites:** Node/pnpm (or selected package manager), valid Cloudflare account ID, API token, and model setting.
 - **Verification:** Human runs the CLI with configured environment and confirms a model request/reply; missing configuration produces a clear startup error.
 
