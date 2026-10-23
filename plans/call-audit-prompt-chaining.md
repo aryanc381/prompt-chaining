@@ -37,12 +37,14 @@ data/demo-data.json                         #REUSED — read-only sample source
       product, windows_version, vspace_version
       type_of_issue, solution, assigned_to
 
-data/conversations/<conversation-id>.json  #NEW at runtime — conversation event log
-  conversation_id, customer_id, ticket_id, started_at, events[]
-    event: timestamp, state, kind, input, output, tool, result
+data/conversations/<conversation-id>.json  #NEW at runtime — workflow event log, not a transcript
+  conversation_id, customer_id, ticket_id, started_at
+  last_customer_message?                  # optional; replace on each turn, never keep older messages
+  events[]                                 # append-only structured state/tool events
+    event: timestamp, state, kind, state_result, tool, result
 ```
 
-Operations: fixture customers and tickets `#READ`; fixture `#WRITE/#MODIFY/#DELETE` none. Conversation event log `#WRITE` by appending state-result and MCP-action events; no updates to the fixture. The `record_unresolved_follow_up` tool records a callback-request event in the conversation log and returns the recorded result; it does not alter the ticket fixture. No indexes, compatibility migration, or schema rollout apply.
+Operations: fixture customers and tickets `#READ`; fixture `#WRITE/#MODIFY/#DELETE` none. Conversation events are `#WRITE` by appending validated JSON state results and MCP-action results; no updates to the fixture. Do not persist a transcript or append every raw customer/assistant utterance. If the optional `last_customer_message` field is used, overwrite it with the newest customer message so it contains at most one utterance. The `record_unresolved_follow_up` tool records a callback-request event in the conversation log and returns the recorded result; it does not alter the ticket fixture. No indexes, compatibility migration, or schema rollout apply.
 
 ## 4. File tree
 
@@ -143,6 +145,7 @@ The engineer runs these cases manually after implementation. Codex does not run 
 
 | Case | Setup | Action | Expected API/data result | Expected CLI result |
 |---|---|---|---|---|
+| Phase 1 stateless chat | Configure valid Cloudflare env | Send a one-off unique code phrase, then in a separate turn ask what it was | Each model request contains exactly one user message; no message transcript is written; optional latest-message field contains at most the newest utterance | Second turn has no access to the phrase from the first turn; CLI remains open between requests |
 | Resolved success | Configure valid Cloudflare env; use sample fixture | Select customer/ticket; verify identity; confirm resolved | Fixture unchanged; conversation JSON contains valid state outputs and context-fetch action; no follow-up write | Correct transitions; resolved close message; event/tool trace shown |
 | Unresolved with reason | Same | Verify identity; say unresolved and give reason | Fixture unchanged; conversation log includes `record_unresolved_follow_up` with reason and callback requested | Acknowledgement, callback statement, close; MCP result shown |
 | Unresolved without reason | Same | Verify identity; say unresolved without reason; answer “What is still not resolved in this ticket?” | Fixture unchanged; reason and callback event appended to conversation log | Remains in reason-pending state until valid reason; then records and closes |

@@ -60,6 +60,7 @@ This is a **workflow using an LLM**, rather than an autonomous agent that choose
 - Verify identity, then fetch ticket and customer details through a local demo MCP function.
 - Ask whether the ticket is resolved; when unresolved, collect a reason if the customer has not already provided one.
 - Record an unresolved reason and callback request in a local per-conversation JSON event log.
+- Keep workflow logs separate from chat transcripts: do not store the full raw conversation; an optional `last_customer_message` field may hold only the newest customer utterance and is overwritten on the next turn.
 - Keep `data/demo-data.json` read-only; do not mutate the sample customer or ticket fixtures.
 - Show state transitions, MCP calls, and results in the terminal.
 
@@ -116,7 +117,7 @@ flowchart TD
 | Orchestrator (`src/orchestrator.ts`) | Runs state transitions in code; stays in the current state for unclear/invalid results. | Planned for Phase 3. |
 | Demo MCP (`src/mcp/`) | Exposes named functions to list sample customers/tickets, fetch ticket context, and record unresolved follow-up. | Planned for Phase 3. |
 | Fixture data (`data/demo-data.json`) | Holds synthetic sample customers and ticket details and remains read-only. | Planned for Phase 3. |
-| Conversation event log (`data/conversations/`) | Stores state outputs and MCP actions in a separate JSON file for each conversation. | Planned for Phase 3. |
+| Conversation event log (`data/conversations/`) | Stores structured state outputs and MCP actions in a separate JSON file for each conversation; never stores a full raw dialogue transcript. It may keep only the latest customer utterance, replacing it on each turn. | Planned for Phase 3. |
 
 ## Conversation state flow
 
@@ -291,3 +292,9 @@ This demo uses a deliberately small, code-orchestrated workflow. The references 
 - Phase 1 is stateless: each model request receives only the current user message. The event log planned for Phase 3 records workflow outputs and MCP actions; it does not become model conversation memory.
 - The demo is not voice-enabled and does not make production ticket changes or contact real customers.
 - Unclear replies remain in the current state once state orchestration is implemented; bounded retries and automated handoff are out of scope.
+
+## Phase 1 smoke test
+
+With Cloudflare values set in `.env`, run `pnpm dev` and send a unique phrase such as `My test code is reef-82`. Then send a second turn asking, `What was my test code?` The model should not know the phrase because each request contains only the current message. Confirm the CLI keeps running between turns, then enter `/exit`.
+
+Optional configuration check: temporarily rename `.env`, start `pnpm dev`, and confirm it exits with a list of missing variable names. Restore the file immediately afterward. A live reply and the stateless check require working Cloudflare credentials and a model available to your account.
