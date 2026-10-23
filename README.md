@@ -60,7 +60,7 @@ This is a **workflow using an LLM**, rather than an autonomous agent that choose
 - Select a sample customer and ticket in the terminal with arrow-key navigation before a conversation starts.
 - Verify identity, then fetch ticket and customer details through a local demo MCP function.
 - Ask whether the ticket is resolved; when unresolved, collect a reason if the customer has not already provided one.
-- Treat clear short yes/no answers deterministically; a bare “no, it wasn't” asks what remains unresolved before requesting a callback.
+- Send every customer message, including short yes/no answers, to the LLM with the active state prompt. Prompt guardrails classify direct answers and distinguish a bare denial from a customer-provided reason; strict JSON validation and the deterministic orchestrator control state transitions.
 - Record an unresolved reason and callback request in a local per-conversation JSON event log.
 - Keep workflow logs separate from chat transcripts; do not save or resend prior chat messages.
 - Keep `data/demo-data.json` read-only; do not mutate the sample customer or ticket fixtures.

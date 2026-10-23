@@ -27,34 +27,6 @@ const prompts: Record<ConversationState, string> = {
   issue_description_pending: issueDescriptionPendingPrompt,
 };
 
-function normalizeAnswer(message: string): string {
-  return message.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-function getClearAnswer(state: ConversationState, message: string): StateResult | undefined {
-  const answer = normalizeAnswer(message);
-
-  if (state === 'identity_verification') {
-    if (/^(yes|yeah|yep|correct)( i am| thats me| that is me)?$/.test(answer)) {
-      return { state, verification_status: 'matched', reply: 'Thanks for confirming.' };
-    }
-    if (/^(no|nope|nah|not me|wrong person|wrong number|this is not me|this isnt me|no this is not me|no this isnt me)$/.test(answer)) {
-      return { state, verification_status: 'mismatched', reply: 'Understood.' };
-    }
-  }
-
-  if (state === 'resolution_pending') {
-    if (/^(yes|yeah|yep|yes it is|yes the issue is resolved|the issue is resolved|it is resolved|resolved|it works now|fixed now)$/.test(answer)) {
-      return { state, ticket_resolution: 'resolved', reason_provided: false, reason_description: '', reply: 'Thanks for confirming.' };
-    }
-    if (/^(no|nope|nah|not yet|not resolved|still not resolved|(no|nope|nah)( it)? (wasnt|was not|isnt|is not)( resolved| fixed| working)?|it (wasnt|was not|isnt|is not) resolved)$/.test(answer)) {
-      return { state, ticket_resolution: 'unresolved', reason_provided: false, reason_description: '', reply: 'What is still not resolved in this ticket?' };
-    }
-  }
-
-  return undefined;
-}
-
 // Runs the selected customer's stateless prompt chain, recording only validated results and MCP actions.
 export async function runConversation(args: {
   client: OpenAI;
@@ -81,15 +53,12 @@ export async function runConversation(args: {
         if (!message) continue;
       }
 
-      const clearAnswer = getClearAnswer(state, message);
-      const result: StateResult = clearAnswer
-        ? clearAnswer
-        : await getStateResult(args.client, args.model, state, prompts[state], message, context);
+      const result: StateResult = await getStateResult(args.client, args.model, state, prompts[state], message, context);
       await args.log.append({ kind: 'state_result', state, state_result: result });
       const nextState = getNextState(state, result);
       const responseFollows = nextState !== state && ['identity_mismatch', 'ticket_resolved', 'issue_description_given', 'issue_description_pending'].includes(nextState);
       if (nextState === 'issue_description_pending') {
-        console.log('\nAssistant: What is still not resolved in this ticket?');
+        console.log(`\nAssistant: ${result.reply}`);
       } else if (!responseFollows) {
         console.log(`\nAssistant: ${result.reply}`);
       }
