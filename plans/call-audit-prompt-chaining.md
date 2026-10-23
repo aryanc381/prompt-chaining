@@ -39,12 +39,11 @@ data/demo-data.json                         #REUSED — read-only sample source
 
 data/conversations/<conversation-id>.json  #NEW at runtime — workflow event log, not a transcript
   conversation_id, customer_id, ticket_id, started_at
-  last_customer_message?                  # optional; replace on each turn, never keep older messages
   events[]                                 # append-only structured state/tool events
-    event: timestamp, state, kind, state_result, tool, result
+    event: at, state, kind, state_result, tool, input, result
 ```
 
-Operations: fixture customers and tickets `#READ`; fixture `#WRITE/#MODIFY/#DELETE` none. Conversation events are `#WRITE` by appending validated JSON state results and MCP-action results; no updates to the fixture. Do not persist a transcript or append every raw customer/assistant utterance. If the optional `last_customer_message` field is used, overwrite it with the newest customer message so it contains at most one utterance. The `record_unresolved_follow_up` tool records a callback-request event in the conversation log and returns the recorded result; it does not alter the ticket fixture. No indexes, compatibility migration, or schema rollout apply.
+Operations: fixture customers and tickets `#READ`; fixture `#WRITE/#MODIFY/#DELETE` none. Conversation events are `#WRITE` by appending validated JSON state results and MCP-action results; no updates to the fixture. Do not persist a transcript or raw customer utterances. The `record_unresolved_follow_up` tool records a callback-request event in the conversation log and returns the recorded result; it does not alter the ticket fixture. No indexes, compatibility migration, or schema rollout apply.
 
 ## 4. File tree
 
@@ -97,7 +96,7 @@ MCP functions use JSON inputs/outputs. Exact envelope shape follows the selected
 
 | Function | Input | Success result | Failure behavior |
 |---|---|---|---|
-| `list_demo_customers` | `{}` | `{customers: [{id, name, organisation, city}]}` | MCP error surfaced in CLI; stop conversation if selection cannot load. |
+| `list_demo_customers` | `{}` | `{customers: [{id, name, organisation, phone_number, city}]}`; the selector displays name, organisation, and city only | MCP error surfaced in CLI; stop conversation if selection cannot load. The selected customer's identity fields are explicit prompt context; ticket details are still fetched only after identity verification. |
 | `list_customer_tickets` | `{customer_id}` | `{tickets: [{id, ticket_number}]}` | Unknown customer/tool error surfaced in CLI. |
 | `get_ticket_context` | `{ticket_id}` | `{customer: {id, name, organisation, phone_number, city}, ticket: {id, ticket_number, technical_information: {product, windows_version, vspace_version, type_of_issue, solution, assigned_to}}}` | Unknown ticket/tool error surfaced in CLI; stop conversation. Called only after identity is verified. |
 | `record_unresolved_follow_up` | `{conversation_id, ticket_id, reason_description}` | `{recorded: true, callback_requested: true, event_id}` | Invalid input or log-write error surfaced in CLI; stop conversation. Writes only to this conversation's local event log. |
@@ -109,8 +108,8 @@ These are local demo MCP tools, not authenticated Circuit APIs. No HTTP status c
 | Owner | Function | Arguments | Return | Side effects | Callers |
 |---|---|---|---|---|---|
 | `services/model.ts` | `getStateResult` | client, model, state, state prompt, current message, explicit context | validated `StateResult` | Cloudflare model request | orchestrator (Phase 3) |
-| `orchestrator.ts` | `handleStateResult` | current state, parsed result, context | next state or closed | appends state output event | CLI loop |
-| `mcp/ticket-tools.ts` | `listDemoCustomers` | none | customer summaries | reads fixture | selector |
+| `orchestrator.ts` | `getNextState` | current state, validated result | next state or closed | none | CLI loop |
+| `mcp/ticket-tools.ts` | `listDemoCustomers` | none | customer identity fields | reads fixture | selector / identity prompt context |
 | `mcp/ticket-tools.ts` | `listCustomerTickets` | customer ID | ticket summaries | reads fixture | selector |
 | `mcp/ticket-tools.ts` | `getTicketContext` | ticket ID | customer and ticket context | reads fixture | orchestrator after verified identity |
 | `mcp/ticket-tools.ts` | `recordUnresolvedFollowUp` | conversation ID, ticket ID, reason | recorded/callback result | appends event to conversation JSON | orchestrator after valid reason |
@@ -118,6 +117,8 @@ These are local demo MCP tools, not authenticated Circuit APIs. No HTTP status c
 | `cli/conversation.ts` | `runConversation` | selected customer/ticket | completed/stopped | collects terminal input; displays events | entry point |
 
 State result validation uses strict schemas with required keys, enums, and types. Identity outcomes distinguish `matched`, `mismatched`, and `unclear`; only matched proceeds to ticket-context lookup. Resolution outcomes distinguish resolved/unresolved and whether a reason was supplied. `reason_description` is required when the reason is supplied and must be non-empty. An unclear or malformed result leaves the state unchanged and prompts again in the current conversation loop; no bounded retry count or retry/handoff policy is added. A model or MCP error is printed and stops the active conversation. The log records successful state outputs and tool actions; a log-write failure is surfaced and stops the run.
+
+The CLI maps short, unambiguous yes/no answers for identity and resolution directly to validated state results. A bare unresolved answer such as “no, it wasn't” is unresolved with no reason and immediately enters `issue_description_pending`; only an explanation can proceed to the callback step.
 
 Identity mismatch response: “Sorry to disturb you. Have a good day.” Do not include the customer name. Ticket context is fetched only after verified identity. Resolved tickets close without a ticket write. For unresolved issues, collect a reason if absent, then record the callback request in the conversation event log.
 
@@ -138,11 +139,11 @@ When no reason is supplied, `reason_provided` is `false` and `reason_description
 
 ### Dependencies and Cloudflare pattern
 
-Use a minimal TypeScript CLI, a terminal arrow-key selector, a JSON schema validator, the official MCP TypeScript SDK, and the OpenAI-compatible client if needed by the Cloudflare endpoint. Confirm package versions and APIs during implementation. Pattern `src/util/cloudflare.ts` after `circuit/apps/perceptron/src/services/assistant.service.ts` and `circuit/apps/perceptron/src/env.ts`: API token, account ID, model, and `https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1` base URL. Read only those Circuit files/patterns; do not change Circuit. Keep credentials in local environment variables and `.env.example` contains placeholders only.
+Use a minimal TypeScript CLI, `@inquirer/prompts` for arrow-key selection, Zod for JSON validation, the official `@modelcontextprotocol/sdk` over an in-memory client/server transport for local demo tools, and the OpenAI-compatible client for the Cloudflare endpoint. The MCP client validates tool outputs before using them. Pattern `src/util/cloudflare.ts` after `circuit/apps/perceptron/src/services/assistant.service.ts` and `circuit/apps/perceptron/src/env.ts`: API token, account ID, model, and `https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1` base URL. Read only those Circuit files/patterns; do not change Circuit. Keep credentials in local environment variables and `.env.example` contains placeholders only.
 
 ## 7. E2E smoke path (human-run)
 
-The engineer runs these cases manually after implementation. Codex does not run or claim E2E results as part of this planning task.
+The engineer runs these cases manually after implementation. Implementation work does not run or claim the E2E smoke results.
 
 | Case | Setup | Action | Expected API/data result | Expected CLI result |
 |---|---|---|---|---|
@@ -200,7 +201,7 @@ The engineer runs these cases manually after implementation. Codex does not run 
 
 - **Outcome:** Shared base context, prompts for each state, and strict schemas for structured outcomes.
 - **Prerequisites:** Phase 1 model wrapper and CLI call loop.
-- **Verification:** TypeScript build succeeds. Human exercises each state prompt in the future CLI after Phase 3 wiring; malformed and unclear outcomes must not advance state.
+- **Verification:** TypeScript build succeeds. Human exercises each state in the Phase 3 CLI; malformed results stop the run and unclear results keep the active state.
 
 ### Phase 3 — Orchestrator, subprompts, and demo MCP end-to-end
 
@@ -208,9 +209,11 @@ The engineer runs these cases manually after implementation. Codex does not run 
 - **Prerequisites:** Phase 2 prompts/contracts; sample fixture and MCP tool definitions.
 - **Verification:** Human runs the success, unresolved, mismatch, unclear, and service-failure cases in the smoke table and inspects that fixture data is unchanged and events are logged.
 
+- **Implementation status:** Complete. The live Cloudflare E2E smoke path is pending the engineer's manual run.
+
 ### Agent orchestration
 
-Single-agent sequential implementation. Parallel subagents are not useful because Phase 2 depends on Phase 1 interfaces and Phase 3 depends on the prompt contracts and state outcomes from Phase 2. Phase 1 and Phase 2 implementation are complete; Phase 3 remains.
+Single-agent sequential implementation. Parallel subagents are not useful because Phase 2 depends on Phase 1 interfaces and Phase 3 depends on the prompt contracts and state outcomes from Phase 2. Phases 1–3 implementation are complete; human E2E smoke verification remains.
 
 ```mermaid
 flowchart TD
@@ -225,7 +228,7 @@ flowchart TD
 - Cloudflare Workers AI credentials/model are supplied by the engineer at runtime; no secrets are committed.
 - Conversation logs may contain the sample customer context and model results. Keep fixtures synthetic; logs are local and one file is written per conversation.
 - Model output can be malformed or unclear. Strict validation prevents state advancement; unclear outcomes remain in the current state, while model/MCP service failures stop the conversation. Retries/handoff are explicitly out of scope.
-- The chosen Cloudflare endpoint/client and MCP SDK versions must be confirmed during implementation.
+- The Cloudflare endpoint/client uses the existing Phase 1 wrapper; Phase 3 uses the official MCP TypeScript SDK with an in-memory transport.
 - The fixture remains unchanged; unresolved follow-up/callback is represented only as an event in the conversation log.
 - All implementation belongs to the new `prompt-chaining` repo; `circuit` is only a read-only pattern reference.
 
@@ -234,5 +237,6 @@ flowchart TD
 - Reviewed Circuit's plan skill and its staged artifact requirements.
 - Reviewed the Circuit Perceptron Cloudflare client/environment pattern to inform the wrapper design.
 - Confirmed the new `prompt-chaining` directory exists and is empty before planning artifact creation.
-- Phase 2 added the shared and six state prompts, strict Zod result contracts, and a stateless model-service entry point. The CLI is not wired to them until Phase 3.
-- `pnpm run build` and `git diff --check` pass after Phase 2. No tests or E2E smoke run was performed; the CLI E2E smoke remains human-run after Phase 3.
+- Phase 2 added the shared and six state prompts, strict Zod result contracts, and a stateless model-service entry point.
+- Phase 3 added the arrow-key selector, deterministic orchestrator, local MCP client/server tools, read-only fixtures, event logging, and the integrated CLI.
+- TypeScript build and `git diff --check` pass. No test files or automated/E2E smoke runs were created or run; the human E2E path above remains pending.

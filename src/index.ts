@@ -1,5 +1,7 @@
-import { createInterface } from 'node:readline';
-import { getAssistantReply } from './services/model.js';
+import { runConversation } from './cli/conversation.js';
+import { selectCustomerAndTicket } from './cli/select-customer.js';
+import { createDemoMcpClient } from './mcp/client.js';
+import { createConversationLog } from './services/conversation-log.js';
 import { createCloudflareClient } from './util/cloudflare.js';
 import { getCloudflareConfig } from './util/env.js';
 
@@ -14,33 +16,22 @@ async function main() {
   }
 
   const client = createCloudflareClient(config);
-  const terminal = createInterface({ input: process.stdin, output: process.stdout });
-
-  console.log('Cloudflare Workers AI chat. Type /exit to quit.');
-  terminal.setPrompt('You: ');
-  terminal.prompt();
-
-  for await (const line of terminal) {
-    const input = line.trim();
-    if (input === '/exit') break;
-    if (!input) {
-      terminal.prompt();
-      continue;
-    }
-
+  const selectionMcp = await createDemoMcpClient();
+  try {
+    const selection = await selectCustomerAndTicket(selectionMcp);
+    const log = await createConversationLog(selection.customerId, selection.ticketId);
+    const mcp = await createDemoMcpClient(log);
     try {
-      const reply = await getAssistantReply(client, config.model, input);
-      console.log(`\nAssistant: ${reply}\n`);
-    } catch (error) {
-      console.error(`\nCloudflare request failed: ${String(error)}`);
-      process.exitCode = 1;
-      break;
+      await runConversation({ client, model: config.model, mcp, log, selection });
+    } finally {
+      await mcp.close();
     }
-    terminal.prompt();
+  } catch (error) {
+    console.error(`\nConversation stopped: ${String(error)}`);
+    process.exitCode = 1;
+  } finally {
+    await selectionMcp.close();
   }
-
-  terminal.close();
-  console.log('\nChat ended.');
 }
 
 main().catch((error: unknown) => {

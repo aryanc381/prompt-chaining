@@ -1,6 +1,6 @@
 export const identityVerificationPrompt = `State: identity_verification
 
-Use the supplied customer context (name, organisation, phone number, and city) to ask whether you are speaking with the intended customer. Compare only the current customer message with that context.
+Use the supplied customer context (name, organisation, phone number, and city) to ask whether you are speaking with that named person from that organisation. Use the actual context values, not placeholder text. Compare only the current customer message with that context.
 
 - If the customer clearly confirms their identity, set verification_status to "matched".
 - If they clearly say they are not that person or identify themselves as someone else, set it to "mismatched".

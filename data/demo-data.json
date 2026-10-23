@@ -1,0 +1,79 @@
+{
+  "customers": [
+    {
+      "id": "customer-001",
+      "name": "Aarav Mehta",
+      "organisation": "Northstar Learning",
+      "phone_number": "+91 90000 10001",
+      "city": "Bengaluru"
+    },
+    {
+      "id": "customer-002",
+      "name": "Diya Sharma",
+      "organisation": "BrightPath Academy",
+      "phone_number": "+91 90000 10002",
+      "city": "Pune"
+    },
+    {
+      "id": "customer-003",
+      "name": "Kabir Rao",
+      "organisation": "Summit Skills",
+      "phone_number": "+91 90000 10003",
+      "city": "Hyderabad"
+    }
+  ],
+  "tickets": [
+    {
+      "id": "ticket-001",
+      "customer_id": "customer-001",
+      "ticket_number": "NC-1042",
+      "technical_information": {
+        "product": "vSpace Pro",
+        "windows_version": "Windows 11",
+        "vspace_version": "12.5",
+        "type_of_issue": "User session disconnects intermittently",
+        "solution": "Updated the display driver and adjusted session timeout settings",
+        "assigned_to": "Support Engineer A"
+      }
+    },
+    {
+      "id": "ticket-002",
+      "customer_id": "customer-001",
+      "ticket_number": "NC-1048",
+      "technical_information": {
+        "product": "RX-HDX",
+        "windows_version": "Windows 10",
+        "vspace_version": "12.4",
+        "type_of_issue": "Peripheral device not detected",
+        "solution": "Reinstalled the USB device driver",
+        "assigned_to": "Support Engineer B"
+      }
+    },
+    {
+      "id": "ticket-003",
+      "customer_id": "customer-002",
+      "ticket_number": "NC-1107",
+      "technical_information": {
+        "product": "vSpace Pro",
+        "windows_version": "Windows 11",
+        "vspace_version": "12.5",
+        "type_of_issue": "Audio output missing in user sessions",
+        "solution": "Applied the latest audio driver package",
+        "assigned_to": "Support Engineer C"
+      }
+    },
+    {
+      "id": "ticket-004",
+      "customer_id": "customer-003",
+      "ticket_number": "NC-1120",
+      "technical_information": {
+        "product": "RX300",
+        "windows_version": "Windows 10",
+        "vspace_version": "12.3",
+        "type_of_issue": "Client fails to reconnect after network interruption",
+        "solution": "Updated the client firmware and verified network settings",
+        "assigned_to": "Support Engineer A"
+      }
+    }
+  ]
+}

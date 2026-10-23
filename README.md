@@ -4,7 +4,7 @@ A terminal chatbot demo for learning how to build a deterministic, state-based s
 
 The scenario is a follow-up from **NComputing India** after a technical support ticket has been closed. The chatbot verifies the customer, asks whether the issue is resolved, and records an unresolved reason and callback request in a local conversation log.
 
-> **Current status:** Phase 1 is implemented. Phase 2's shared/state prompts and strict JSON result validation are implemented as reusable modules. Phase 3 will connect them to the CLI with the orchestrator, customer selector, and demo MCP.
+> **Current status:** Phases 1–3 are implemented. The CLI selects synthetic customers and tickets, runs the stateless prompt chain through a deterministic orchestrator, calls local MCP tools, and writes structured per-conversation event logs.
 
 ## Table of contents
 
@@ -27,7 +27,7 @@ Prompt chaining breaks a larger task into a sequence of smaller model steps. Eac
 
 For this project, the intended chain is a fixed customer-support workflow: verify identity, check ticket resolution, and, when needed, collect the unresolved reason. The application code acts as the orchestrator: it chooses which state prompt runs next and validates the model's JSON outcome before changing state. The model writes the response for the current step; code controls the workflow.
 
-This is a **workflow using an LLM**, rather than an autonomous agent that chooses its own sequence of actions. Keeping the transitions in code makes the conversation easier to inspect and reason about. Phase 2 now defines the prompts and validates their JSON results; Phase 3 will add code that chooses the next state.
+This is a **workflow using an LLM**, rather than an autonomous agent that chooses its own sequence of actions. Keeping the transitions in code makes the conversation easier to inspect and reason about. The model classifies the current turn with the active state prompt; the application validates its JSON and chooses the next state.
 
 ## What this demo is teaching
 
@@ -55,39 +55,43 @@ This is a **workflow using an LLM**, rather than an autonomous agent that choose
 - Validate model output as strict JSON, reject extra/missing fields, enforce state-specific values, and check that the result belongs to the active state.
 - Send only the current user message, the active prompts, and explicit context with a state request; never include previous chat turns.
 
-The reusable `getStateResult` model-service function is ready for the Phase 3 orchestrator. The Phase 1 CLI still uses its simple free-form chat call until that orchestrator is added.
-
-### Planned for Phase 3
+### Implemented in Phase 3
 
 - Select a sample customer and ticket in the terminal with arrow-key navigation before a conversation starts.
 - Verify identity, then fetch ticket and customer details through a local demo MCP function.
 - Ask whether the ticket is resolved; when unresolved, collect a reason if the customer has not already provided one.
+- Treat clear short yes/no answers deterministically; a bare “no, it wasn't” asks what remains unresolved before requesting a callback.
 - Record an unresolved reason and callback request in a local per-conversation JSON event log.
-- Keep workflow logs separate from chat transcripts: do not store the full raw conversation; an optional `last_customer_message` field may hold only the newest customer utterance and is overwritten on the next turn.
+- Keep workflow logs separate from chat transcripts; do not save or resend prior chat messages.
 - Keep `data/demo-data.json` read-only; do not mutate the sample customer or ticket fixtures.
-- Show state transitions, MCP calls, and results in the terminal.
+- Show state transitions and MCP calls in the terminal.
 
 ## How the system works
 
-### Phase 1: current chatbot
+### Current call-audit chatbot
 
-The current code uses a normal chat-completions request. Each request contains only the latest user message; previous user and assistant turns are neither stored nor sent to the model. The Cloudflare utility builds the OpenAI-compatible endpoint URL from the account ID; the model service sends the current message and returns the assistant text.
+Each state request contains only the latest customer message, the active state prompt, and explicit customer/ticket context; previous user and assistant turns are neither stored nor sent to the model. The Cloudflare utility builds the OpenAI-compatible endpoint URL from the account ID.
 
 ```mermaid
 flowchart LR
-    U["You in terminal"] -->|message| CLI["CLI chat loop\nsrc/index.ts"]
-    CLI -->|only the current message| SVC["Model service\nsrc/services/model.ts"]
+    U["You in terminal"] -->|arrow-key selection + current reply| CLI["CLI\nsrc/index.ts"]
+    CLI --> ORCH["State orchestrator\nsrc/orchestrator.ts"]
+    ORCH -->|active prompt + current message + explicit context| SVC["Model service\nsrc/services/model.ts"]
     ENV[".env variables"] -->|account, token, model| CF["Cloudflare utility\nsrc/util/cloudflare.ts"]
     CF -->|OpenAI-compatible client| SVC
-    SVC -->|chat completion request| AI["Cloudflare Workers AI"]
-    AI -->|assistant reply| SVC
-    SVC -->|text| CLI
-    CLI -->|print reply| U
+    SVC -->|prompt request| AI["Cloudflare Workers AI"]
+    AI -->|strict JSON result| SVC
+    SVC -->|validated state result| ORCH
+    ORCH -->|next state + reply| CLI
+    ORCH -->|MCP calls| MCP["Local MCP client/server"]
+    MCP -->|read only| DATA["data/demo-data.json"]
+    MCP -->|state and tool events| LOG["data/conversations/<id>.json"]
+    CLI -->|reply and workflow trace| U
 ```
 
-### Planned full call-audit system
+### Workflow boundaries
 
-The complete demo adds a deterministic orchestrator and per-state prompts. The model classifies/responds for the active step using a strict result shape. The orchestrator validates that result, decides whether to stay in the state or advance, and calls the local MCP functions when the locked workflow requires ticket data or a local follow-up record.
+The selection menu fetches customer/ticket summaries through MCP. The customer name, organisation, phone, and city are used for identity verification; full ticket details are fetched only after a matching identity result. MCP outputs are validated before the workflow uses them.
 
 ```mermaid
 flowchart TD
@@ -111,16 +115,16 @@ flowchart TD
 
 | Component | Responsibility | Status |
 |---|---|---|
-| Terminal CLI (`src/index.ts`) | Reads a message, sends only that message for a reply, and prints the response. Later it will also select sample customer/ticket and show workflow events. | Stateless basic chat implemented; selection/events planned. |
+| Terminal CLI (`src/index.ts`, `src/cli/`) | Selects a sample customer and ticket, then runs and displays the call-audit flow. | Implemented. |
 | Cloudflare utility (`src/util/cloudflare.ts`) | Creates the OpenAI-compatible client using the account-specific Workers AI endpoint. | Implemented. |
 | Environment loader (`src/util/env.ts`) | Loads `.env` and validates account ID, API token, and model. | Implemented. |
-| Model service (`src/services/model.ts`) | Sends the current message to the selected model and returns non-empty assistant text. | Implemented. |
-| Base and state prompts (`src/prompts/`) | Supply shared company context and instructions for the current workflow state. | Implemented; orchestration integration planned for Phase 3. |
+| Model service (`src/services/model.ts`) | Sends one current message with active prompt/context and validates the JSON result. | Implemented. |
+| Base and state prompts (`src/prompts/`) | Supply shared company context and instructions for the current workflow state. | Implemented and wired into the CLI. |
 | Result contracts (`src/contracts/`) | Define strict JSON outcomes for all six states and reject invalid state results. | Implemented. |
-| Orchestrator (`src/orchestrator.ts`) | Runs state transitions in code; stays in the current state for unclear/invalid results. | Planned for Phase 3. |
-| Demo MCP (`src/mcp/`) | Exposes named functions to list sample customers/tickets, fetch ticket context, and record unresolved follow-up. | Planned for Phase 3. |
-| Fixture data (`data/demo-data.json`) | Holds synthetic sample customers and ticket details and remains read-only. | Planned for Phase 3. |
-| Conversation event log (`data/conversations/`) | Stores structured state outputs and MCP actions in a separate JSON file for each conversation; never stores a full raw dialogue transcript. It may keep only the latest customer utterance, replacing it on each turn. | Planned for Phase 3. |
+| Orchestrator (`src/orchestrator.ts`) | Applies transitions from validated result fields; unclear results keep the current state. | Implemented. |
+| Demo MCP (`src/mcp/`) | Exposes named tools for customer/ticket lookup and unresolved follow-up logging over the MCP client/server protocol. | Implemented locally in memory. |
+| Fixture data (`data/demo-data.json`) | Holds synthetic sample customers and ticket details and remains read-only. | Implemented. |
+| Conversation event log (`data/conversations/`) | Writes state outputs and MCP actions per conversation without raw chat messages. | Implemented; generated JSON files are git-ignored. |
 
 ## Conversation state flow
 
@@ -153,7 +157,7 @@ The model does **not** control state transitions by itself. It returns a state-s
 
 ### Requirements
 
-- Node.js 22 or newer
+- Node.js 22.13 or newer
 - pnpm 12.5.1 (the pinned version in `package.json`)
 - A Cloudflare account with Workers AI access, an account ID, an API token with the required Workers AI permissions, and a model enabled for that account
 
@@ -174,7 +178,7 @@ Edit `.env` and set all three Cloudflare values described below. Keep `.env` pri
 pnpm dev
 ```
 
-Each message is an independent request. The chatbot does not remember earlier messages, and no conversation transcript is kept in memory or written to disk. Enter `/exit` or press Ctrl+C to finish.
+Choose a sample customer and ticket with the arrow keys, then respond to the active workflow question. Each model call includes only the current message and explicit state context. Enter `/exit` or press Ctrl+C to stop; the structured event log remains in `data/conversations/`.
 
 To compile and run the JavaScript build instead:
 
@@ -229,7 +233,7 @@ Run the interactive CLI from the repo root:
 ddev exec pnpm dev
 ```
 
-The terminal remains interactive. Type messages, press Enter, and use `/exit` to quit. To stop the DDEV project when finished:
+The terminal remains interactive. Use the arrow keys to select a customer and ticket, then type replies and press Enter. Use `/exit` to stop. To stop the DDEV project when finished:
 
 ```sh
 ddev stop
@@ -264,25 +268,36 @@ If a value is empty or missing, startup prints the missing variable names and ex
 ```text
 prompt-chaining/
 ├── .env.example                    # Cloudflare variable names; no secrets
-├── data/                           # Planned: read-only fixtures and conversation logs
+├── data/
+│   ├── demo-data.json               # Synthetic read-only customers and tickets
+│   └── conversations/                # Runtime JSON logs (git-ignored)
 ├── plans/
 │   └── call-audit-prompt-chaining.md
 ├── src/
-│   ├── index.ts                    # Terminal chat loop
+│   ├── index.ts                    # CLI entry point
+│   ├── cli/
+│   │   ├── conversation.ts          # Interactive state conversation
+│   │   └── select-customer.ts       # Arrow-key customer/ticket selection
+│   ├── orchestrator.ts              # Deterministic state transitions
+│   ├── mcp/
+│   │   ├── client.ts                # In-memory MCP client
+│   │   ├── server.ts                # Local MCP tool registration
+│   │   └── ticket-tools.ts          # Fixture reads and event logging
+│   ├── services/
+│   │   ├── conversation-log.ts      # Per-conversation event log
+│   │   └── model.ts                 # Stateless model calls
 │   ├── contracts/
 │   │   └── state-results.ts        # Strict state JSON validation
 │   ├── prompts/
 │   │   ├── base.ts                 # Shared company/purpose/stateless context
 │   │   └── states/                 # Six individual state prompts
-│   ├── services/
-│   │   └── model.ts                # Free-form and validated state model calls
 │   └── util/
 │       ├── cloudflare.ts           # Cloudflare endpoint/client wrapper
 │       └── env.ts                  # Load and validate environment
 └── package.json
 ```
 
-The prompts and contracts are implemented. `orchestrator.ts`, `cli/`, and `mcp/` will be added in Phase 3.
+Runtime conversation logs are not committed. Fixture customer and ticket data is synthetic and read-only.
 
 Each state result has a required `state` discriminator and exact fields. The validator rejects malformed JSON, extra keys, missing fields, invalid enum values, non-empty reasons when no reason was given, and results that name a different state than the active prompt.
 
@@ -306,14 +321,23 @@ This demo uses a deliberately small, code-orchestrated workflow. The references 
 
 ## Current limitations
 
-- Phase 1 is a general chat loop, not yet the call-audit prompt chain.
-- State prompts and JSON validation exist, but the terminal chat is not yet wired to a state prompt; the customer/ticket selector, orchestrator, and MCP server are Phase 3 work.
-- Phase 1 is stateless: each model request receives only the current user message. The event log planned for Phase 3 records workflow outputs and MCP actions; it does not become model conversation memory.
+- Live model behavior and the complete E2E flow still need the human smoke run below.
+- MCP tools run locally in memory; the demo does not connect to Circuit or an external MCP host.
+- Event logs contain structured state results and MCP actions, but no raw customer utterance or transcript.
+- Each model request receives only the current message plus the active prompt and explicit context; prior turns are not retained as model conversation memory.
 - The demo is not voice-enabled and does not make production ticket changes or contact real customers.
-- Unclear replies remain in the current state once state orchestration is implemented; bounded retries and automated handoff are out of scope.
+- Unclear replies remain in the current state; bounded retries and automated handoff are out of scope.
 
-## Phase 1 smoke test
+## Phase 3 E2E smoke test (human-run)
 
-With Cloudflare values set in `.env`, run `pnpm dev` and send a unique phrase such as `My test code is reef-82`. Then send a second turn asking, `What was my test code?` The model should not know the phrase because each request contains only the current message. Confirm the CLI keeps running between turns, then enter `/exit`.
+With Cloudflare values set in `.env`, run `pnpm dev`, select a sample customer and ticket, then try these cases:
+
+- **Identity mismatch:** say you are not the selected person. Expect an apology without a name and no ticket-context fetch.
+- **Resolved:** confirm identity, then say the ticket is resolved. Expect the conversation to close without a callback event.
+- **Unresolved with reason:** confirm identity, then give a reason the issue remains. Expect callback acknowledgement and a follow-up event in `data/conversations/`.
+- **Unresolved without reason:** say it is unresolved without explaining why. Expect “What is still not resolved in this ticket?”; provide a reason and expect callback logging.
+- **Unclear:** reply “hello” at identity, resolution, or reason-pending state. Expect the same state to remain active.
+- **Service failure:** make the Cloudflare model unavailable or use an invalid model setting. Expect a clear error and the current conversation to stop without an invented state transition.
+- **Log check:** inspect the conversation JSON. It should include state results and MCP actions but no raw chat transcript or prior turns.
 
 Optional configuration check: temporarily rename `.env`, start `pnpm dev`, and confirm it exits with a list of missing variable names. Restore the file immediately afterward. A live reply and the stateless check require working Cloudflare credentials and a model available to your account.
