@@ -108,7 +108,7 @@ These are local demo MCP tools, not authenticated Circuit APIs. No HTTP status c
 
 | Owner | Function | Arguments | Return | Side effects | Callers |
 |---|---|---|---|---|---|
-| `services/model.ts` | `runStatePrompt` | state, prompt/context, conversation | typed state result | Cloudflare model request | orchestrator |
+| `services/model.ts` | `getStateResult` | client, model, state, state prompt, current message, explicit context | validated `StateResult` | Cloudflare model request | orchestrator (Phase 3) |
 | `orchestrator.ts` | `handleStateResult` | current state, parsed result, context | next state or closed | appends state output event | CLI loop |
 | `mcp/ticket-tools.ts` | `listDemoCustomers` | none | customer summaries | reads fixture | selector |
 | `mcp/ticket-tools.ts` | `listCustomerTickets` | customer ID | ticket summaries | reads fixture | selector |
@@ -123,17 +123,18 @@ Identity mismatch response: “Sorry to disturb you. Have a good day.” Do not 
 
 ### State JSON contracts
 
-Illustrative exact contract to implement (no extra properties):
+The strict Zod contracts in `src/contracts/state-results.ts` are authoritative and reject extra keys, missing fields, invalid enums, invalid reason combinations, malformed JSON, and results whose `state` does not match the active prompt.
 
 ```json
-{"state":"identity_verification","verification_status":"matched|mismatched|unclear"}
+{"state":"identity_verification","verification_status":"matched","reply":"Thanks for confirming."}
+{"state":"identity_mismatch","outcome":"closed","reply":"Sorry to disturb you. Have a good day."}
+{"state":"resolution_pending","ticket_resolution":"unresolved","reason_provided":true,"reason_description":"The device still disconnects.","reply":"I understand the issue is still happening."}
+{"state":"ticket_resolved","outcome":"closed","reply":"Thank you for confirming. Have a good day."}
+{"state":"issue_description_given","reason_description":"The device still disconnects.","callback_requested":true,"reply":"I’m sorry about the trouble. We’ll arrange a callback shortly."}
+{"state":"issue_description_pending","reason_status":"unclear","reason_description":"","reply":"What is still not resolved in this ticket?"}
 ```
 
-```json
-{"state":"resolution_pending","ticket_resolution":"resolved|unresolved","reason_provided":true,"reason_description":"..."}
-```
-
-When no reason was supplied, `reason_provided` is `false` and `reason_description` is an empty string. When unresolved and a reason is supplied, it is `true` with a non-empty description. Other states use a state-specific result with a validated outcome and customer-facing reply; mismatch and resolved close, issue-description-given records the callback request, and issue-description-pending accepts the reason. Schemas in `contracts/state-results.ts` are authoritative and reject extra fields.
+When no reason is supplied, `reason_provided` is `false` and `reason_description` is empty. Only an unresolved result can include a reason. For the reason-pending state, `reason_status` is `provided` exactly when `reason_description` is non-empty. Every result includes the customer-facing `reply` that the future CLI will display.
 
 ### Dependencies and Cloudflare pattern
 
@@ -199,7 +200,7 @@ The engineer runs these cases manually after implementation. Codex does not run 
 
 - **Outcome:** Shared base context, prompts for each state, and strict schemas for structured outcomes.
 - **Prerequisites:** Phase 1 model wrapper and CLI call loop.
-- **Verification:** Human exercises each state prompt and confirms outputs parse against its schema; malformed or unclear outcomes do not advance state.
+- **Verification:** TypeScript build succeeds. Human exercises each state prompt in the future CLI after Phase 3 wiring; malformed and unclear outcomes must not advance state.
 
 ### Phase 3 — Orchestrator, subprompts, and demo MCP end-to-end
 
@@ -209,7 +210,7 @@ The engineer runs these cases manually after implementation. Codex does not run 
 
 ### Agent orchestration
 
-Single-agent sequential implementation. Parallel subagents are not useful because Phase 2 depends on Phase 1 interfaces and Phase 3 depends on the prompt contracts and state outcomes from Phase 2. No implementation has started.
+Single-agent sequential implementation. Parallel subagents are not useful because Phase 2 depends on Phase 1 interfaces and Phase 3 depends on the prompt contracts and state outcomes from Phase 2. Phase 1 and Phase 2 implementation are complete; Phase 3 remains.
 
 ```mermaid
 flowchart TD
@@ -233,4 +234,5 @@ flowchart TD
 - Reviewed Circuit's plan skill and its staged artifact requirements.
 - Reviewed the Circuit Perceptron Cloudflare client/environment pattern to inform the wrapper design.
 - Confirmed the new `prompt-chaining` directory exists and is empty before planning artifact creation.
-- No code was implemented and no automated or E2E tests were run.
+- Phase 2 added the shared and six state prompts, strict Zod result contracts, and a stateless model-service entry point. The CLI is not wired to them until Phase 3.
+- `pnpm run build` and `git diff --check` pass after Phase 2. No tests or E2E smoke run was performed; the CLI E2E smoke remains human-run after Phase 3.

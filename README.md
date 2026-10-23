@@ -4,7 +4,7 @@ A terminal chatbot demo for learning how to build a deterministic, state-based s
 
 The scenario is a follow-up from **NComputing India** after a technical support ticket has been closed. The chatbot verifies the customer, asks whether the issue is resolved, and records an unresolved reason and callback request in a local conversation log.
 
-> **Current status:** Phase 1 is implemented: a basic terminal chat loop connected to Cloudflare Workers AI. The call-audit state prompts, orchestrator, sample customer selector, and demo MCP are planned for Phases 2 and 3 and are not implemented yet.
+> **Current status:** Phase 1 is implemented. Phase 2's shared/state prompts and strict JSON result validation are implemented as reusable modules. Phase 3 will connect them to the CLI with the orchestrator, customer selector, and demo MCP.
 
 ## Table of contents
 
@@ -27,7 +27,7 @@ Prompt chaining breaks a larger task into a sequence of smaller model steps. Eac
 
 For this project, the intended chain is a fixed customer-support workflow: verify identity, check ticket resolution, and, when needed, collect the unresolved reason. The application code acts as the orchestrator: it chooses which state prompt runs next and validates the model's JSON outcome before changing state. The model writes the response for the current step; code controls the workflow.
 
-This is a **workflow using an LLM**, rather than an autonomous agent that chooses its own sequence of actions. Keeping the transitions in code makes the conversation easier to inspect and reason about. The current Phase 1 chatbot is a basic model-connected chat loop; the prompt chain is introduced in the later phases.
+This is a **workflow using an LLM**, rather than an autonomous agent that chooses its own sequence of actions. Keeping the transitions in code makes the conversation easier to inspect and reason about. Phase 2 now defines the prompts and validates their JSON results; Phase 3 will add code that chooses the next state.
 
 ## What this demo is teaching
 
@@ -48,11 +48,14 @@ This is a **workflow using an LLM**, rather than an autonomous agent that choose
 - Report all missing required configuration variables before opening the chat.
 - Display model/API errors and exit the current chat; enter `/exit` or press Ctrl+C to end the session.
 
-### Planned for Phase 2
+### Implemented in Phase 2
 
-- Add a shared base prompt with the agent personality, company context, and reason for contacting the customer.
-- Add a separate prompt for each conversation state.
-- Define strict JSON result contracts for each state and validate them before any transition.
+- Add a shared base prompt with agent personality, NComputing India context, and the reason for contacting the customer.
+- Add one focused prompt for each of the six states.
+- Validate model output as strict JSON, reject extra/missing fields, enforce state-specific values, and check that the result belongs to the active state.
+- Send only the current user message, the active prompts, and explicit context with a state request; never include previous chat turns.
+
+The reusable `getStateResult` model-service function is ready for the Phase 3 orchestrator. The Phase 1 CLI still uses its simple free-form chat call until that orchestrator is added.
 
 ### Planned for Phase 3
 
@@ -82,7 +85,7 @@ flowchart LR
     CLI -->|print reply| U
 ```
 
-### Planned call-audit system
+### Planned full call-audit system
 
 The complete demo adds a deterministic orchestrator and per-state prompts. The model classifies/responds for the active step using a strict result shape. The orchestrator validates that result, decides whether to stay in the state or advance, and calls the local MCP functions when the locked workflow requires ticket data or a local follow-up record.
 
@@ -112,8 +115,8 @@ flowchart TD
 | Cloudflare utility (`src/util/cloudflare.ts`) | Creates the OpenAI-compatible client using the account-specific Workers AI endpoint. | Implemented. |
 | Environment loader (`src/util/env.ts`) | Loads `.env` and validates account ID, API token, and model. | Implemented. |
 | Model service (`src/services/model.ts`) | Sends the current message to the selected model and returns non-empty assistant text. | Implemented. |
-| Base and state prompts (`src/prompts/`) | Supply shared company context and the instructions for the current workflow state. | Planned for Phase 2. |
-| Result contracts (`src/contracts/`) | Define and validate strict JSON outcomes for each state. | Planned for Phase 2. |
+| Base and state prompts (`src/prompts/`) | Supply shared company context and instructions for the current workflow state. | Implemented; orchestration integration planned for Phase 3. |
+| Result contracts (`src/contracts/`) | Define strict JSON outcomes for all six states and reject invalid state results. | Implemented. |
 | Orchestrator (`src/orchestrator.ts`) | Runs state transitions in code; stays in the current state for unclear/invalid results. | Planned for Phase 3. |
 | Demo MCP (`src/mcp/`) | Exposes named functions to list sample customers/tickets, fetch ticket context, and record unresolved follow-up. | Planned for Phase 3. |
 | Fixture data (`data/demo-data.json`) | Holds synthetic sample customers and ticket details and remains read-only. | Planned for Phase 3. |
@@ -266,15 +269,31 @@ prompt-chaining/
 │   └── call-audit-prompt-chaining.md
 ├── src/
 │   ├── index.ts                    # Terminal chat loop
+│   ├── contracts/
+│   │   └── state-results.ts        # Strict state JSON validation
+│   ├── prompts/
+│   │   ├── base.ts                 # Shared company/purpose/stateless context
+│   │   └── states/                 # Six individual state prompts
 │   ├── services/
-│   │   └── model.ts                # Workers AI chat completion
+│   │   └── model.ts                # Free-form and validated state model calls
 │   └── util/
 │       ├── cloudflare.ts           # Cloudflare endpoint/client wrapper
 │       └── env.ts                  # Load and validate environment
 └── package.json
 ```
 
-As Phases 2 and 3 are implemented, `prompts/`, `contracts/`, `orchestrator.ts`, `cli/`, and `mcp/` will be added.
+The prompts and contracts are implemented. `orchestrator.ts`, `cli/`, and `mcp/` will be added in Phase 3.
+
+Each state result has a required `state` discriminator and exact fields. The validator rejects malformed JSON, extra keys, missing fields, invalid enum values, non-empty reasons when no reason was given, and results that name a different state than the active prompt.
+
+| State | Required result fields |
+|---|---|
+| `identity_verification` | `state`, `verification_status` (`matched`, `mismatched`, or `unclear`), `reply` |
+| `identity_mismatch` | `state`, `outcome` (`closed`), `reply` fixed to “Sorry to disturb you. Have a good day.” |
+| `resolution_pending` | `state`, `ticket_resolution` (`resolved`, `unresolved`, or `unclear`), `reason_provided`, `reason_description`, `reply` |
+| `ticket_resolved` | `state`, `outcome` (`closed`), `reply` |
+| `issue_description_given` | `state`, non-empty `reason_description`, `callback_requested` (`true`), `reply` |
+| `issue_description_pending` | `state`, `reason_status` (`provided` or `unclear`), `reason_description`, `reply` |
 
 ## References
 
@@ -288,7 +307,7 @@ This demo uses a deliberately small, code-orchestrated workflow. The references 
 ## Current limitations
 
 - Phase 1 is a general chat loop, not yet the call-audit prompt chain.
-- There is no state-specific prompt, JSON schema validation, customer/ticket selector, orchestrator, or MCP server yet.
+- State prompts and JSON validation exist, but the terminal chat is not yet wired to a state prompt; the customer/ticket selector, orchestrator, and MCP server are Phase 3 work.
 - Phase 1 is stateless: each model request receives only the current user message. The event log planned for Phase 3 records workflow outputs and MCP actions; it does not become model conversation memory.
 - The demo is not voice-enabled and does not make production ticket changes or contact real customers.
 - Unclear replies remain in the current state once state orchestration is implemented; bounded retries and automated handoff are out of scope.
