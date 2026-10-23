@@ -1,16 +1,17 @@
 # Call Audit Prompt Chaining Demo
 
-A terminal chatbot demo for learning how to build a deterministic, state-based support conversation with prompt chaining, structured JSON results, and local MCP tools.
+A CLI demo of a stateless, state-based support chatbot for **NComputing India**. It follows up after a technical support ticket is closed, verifies the customer, asks whether the issue is resolved, and records an unresolved reason and callback request.
 
-The scenario is a follow-up from **NComputing India** after a technical support ticket has been closed. The chatbot verifies the customer, asks whether the issue is resolved, and records an unresolved reason and callback request in a local conversation log.
+The workflow uses **GLM-5.3-Flash** through Cloudflare Workers AI. The configured model identifier is `@cf/zai-org/glm-5.3-flash`; change `CLOUDFLARE_AI_MODEL` to use another Workers AI model available to your account.
 
-> **Current status:** Phases 1–3 are implemented. The CLI selects synthetic customers and tickets, runs the stateless prompt chain through a deterministic orchestrator, calls local MCP tools, and writes structured per-conversation event logs.
+> **Status:** Phases 1–3 are implemented. The CLI selects synthetic customers and tickets, runs a stateless prompt chain, validates structured model results, calls local MCP tools, and writes per-conversation event logs.
 
 ## Table of contents
 
 - [What is prompt chaining?](#what-is-prompt-chaining)
 - [What this demo is teaching](#what-this-demo-is-teaching)
 - [Functional features](#functional-features)
+- [Prompt guardrails and classification](#prompt-guardrails-and-classification)
 - [How the system works](#how-the-system-works)
 - [System components](#system-components)
 - [Conversation state flow](#conversation-state-flow)
@@ -18,8 +19,10 @@ The scenario is a follow-up from **NComputing India** after a technical support 
 - [Run with DDEV](#run-with-ddev)
 - [Environment variables](#environment-variables)
 - [Project structure](#project-structure)
+- [State JSON contracts](#state-json-contracts)
 - [References](#references)
 - [Current limitations](#current-limitations)
+- [Phase 3 E2E smoke test](#phase-3-e2e-smoke-test-human-run)
 
 ## What is prompt chaining?
 
@@ -28,6 +31,14 @@ Prompt chaining breaks a larger task into a sequence of smaller model steps. Eac
 For this project, the intended chain is a fixed customer-support workflow: verify identity, check ticket resolution, and, when needed, collect the unresolved reason. The application code acts as the orchestrator: it chooses which state prompt runs next and validates the model's JSON outcome before changing state. The model writes the response for the current step; code controls the workflow.
 
 This is a **workflow using an LLM**, rather than an autonomous agent that chooses its own sequence of actions. Keeping the transitions in code makes the conversation easier to inspect and reason about. The model classifies the current turn with the active state prompt; the application validates its JSON and chooses the next state.
+
+### Prompt chaining with a gate
+
+This diagram illustrates the general pattern: one model call produces structured output, an application gate checks that output, and only a passing result continues to the next step. A failed result can stop the flow.
+
+![Prompt chaining with a validation gate: input flows through an LLM call, a pass/fail gate, and then the next LLM call or exit.](docs/images/prompt-chain-gate.png)
+
+In this demo, the gate is the strict JSON schema validation plus the code-based state transition rules. Each customer turn goes to the LLM with the active state prompt; there is no separate LLM call used only for routing.
 
 ## What this demo is teaching
 
@@ -65,6 +76,12 @@ This is a **workflow using an LLM**, rather than an autonomous agent that choose
 - Keep workflow logs separate from chat transcripts; do not save or resend prior chat messages.
 - Keep `data/demo-data.json` read-only; do not mutate the sample customer or ticket fixtures.
 - Show state transitions and MCP calls in the terminal.
+
+## Prompt guardrails and classification
+
+Every customer utterance, including a short reply such as “yes” or “no,” is sent to the LLM with the active state prompt. Prompt instructions and examples guide the model to distinguish a clear answer from an unclear reply and to tell a bare denial apart from a specific explanation of what remains unresolved.
+
+> **Small note:** There is no regex or hard-coded keyword matcher for classifying customer replies. The active prompt guides the LLM; the application validates its JSON result and applies the state transition rules.
 
 ## How the system works
 
@@ -215,7 +232,6 @@ cp .env.example .env
 Fill in the Cloudflare values in `.env`, then install dependencies in the container:
 
 ```sh
-ddev start
 ddev exec pnpm --version
 ddev exec pnpm install
 ```
@@ -253,7 +269,7 @@ cp .env.example .env
 |---|---|---|
 | `CLOUDFLARE_ACCOUNT_ID` | Yes | Cloudflare account ID used in the Workers AI API URL. |
 | `CLOUDFLARE_API_TOKEN` | Yes | Cloudflare API token permitted to invoke Workers AI for the account. Store it only in your local `.env`. |
-| `CLOUDFLARE_AI_MODEL` | Yes | Workers AI model identifier enabled for your account. |
+| `CLOUDFLARE_AI_MODEL` | Yes | Workers AI model identifier enabled for your account. This demo is configured for `@cf/zai-org/glm-5.3-flash` (GLM-5.3-Flash). |
 
 The wrapper calls the OpenAI-compatible Cloudflare endpoint:
 
